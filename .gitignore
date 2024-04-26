@@ -1,0 +1,27 @@
+# Python standard
+*.pyc
+*.pyo
+*.pyd
+*.ipynb
+__pycache__
+*.so
+*.egg
+*.egg-info
+dist
+build
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+.venv/
+*.pot
+*.log
+*.egg-info/
+doc/_build/
+
+# Ignore big files
+*.tar.gz
+*.zip
+*.csv
+*.json

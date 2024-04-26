@@ -4,7 +4,9 @@ import pandas as pd
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--file_path", default="data/fff_clubs.json", type=str, required=False)
+    parser.add_argument(
+        "--file_path", default="data/fff_clubs.json", type=str, required=False
+    )
     args = parser.parse_args()
 
     with open(args.file_path, "r") as file:

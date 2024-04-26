@@ -1,3 +1,4 @@
+# Get the latitude and longitude of the cities in France
 import pandas as pd
 
 if __name__ == "__main__":

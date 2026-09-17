@@ -47,6 +47,8 @@ continue de fonctionner si le projet Firebase change de clé.
 - `scrap.py` : récupère le menu du jour et l'exporte en JSON et CSV.
 - `menus_sportifs.py` : compose trois menus sains « sportif » à partir du menu du
   jour et vérifie qu'ils tiennent dans un budget donné (16 € par défaut).
+- `commander.py` : passe une commande, en reproduisant ce que fait le navigateur
+  quand on valide le panier.
 
 ## Usage
 
@@ -63,4 +65,36 @@ python scrap.py --all --json catalogue.json --csv catalogue.csv
 ```
 python menus_sportifs.py
 python menus_sportifs.py --budget 20
+```
+
+## Passer une commande
+
+`commander.py` reproduit la fonction `passerCommande()` du site :
+
+1. vérification de la fenêtre de commande (`config/horaire`, heure de Paris) ;
+2. réservation d'un numéro de commande sur `config/compteur` — le site utilise
+   une transaction Firestore, le script fait le compare-and-set équivalent sur
+   l'`updateTime` du document, avec retry en cas de conflit ;
+3. écriture de la commande dans `commandes/<dateKey>_<num>` — c'est ce document
+   qui s'affiche en temps réel dans le back-office du traiteur ;
+4. envoi du bon de commande au traiteur et de la confirmation au client via
+   l'API REST EmailJS (`config/emailjs`).
+
+Points d'attention :
+
+- **le dry run est le mode par défaut**, rien n'est envoyé sans `--execute` ;
+- le choix de barquette est obligatoire (`verre` gratuit, `carton` +0,25 €,
+  `achat-verre` +9 €), comme sur le site ;
+- les prix des lignes ne sont pas arrondis, exactement comme le site, qui
+  n'arrondit qu'à l'affichage : le total doit correspondre au centime près à ce
+  que voit le traiteur ;
+- l'écriture de la commande utilise la précondition `currentDocument.exists=false`
+  pour ne jamais écraser une commande existante ;
+- si le mail au traiteur échoue, le script dépose l'alerte `config/alerte_mail`
+  comme le fait le site ; la commande reste visible dans le back-office.
+
+```
+python commander.py --menu 1 --barquette carton              # dry run
+python commander.py --menu 1 --barquette carton --bon bon.html
+python commander.py --menu 1 --barquette carton --execute    # commande réelle
 ```

@@ -13,3 +13,8 @@ Located in the `mairie` directory, this project contains scripts for processing 
 ## DÉLIT. Traiteur Menu
 
 Located in the `delit` directory, this project contains scripts for scraping the daily menu of the DÉLIT. caterer and building sport-oriented menus out of it.
+
+## Claude Skill
+
+The `.claude/skills/delit-commande` skill drives a full ordering flow on delit.co: daily menu, budget and cravings, three menu proposals, contact form, order slip validation and real order. It embeds its own copy of the scraping and ordering code, so it works on its own.
+

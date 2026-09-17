@@ -98,3 +98,13 @@ python commander.py --menu 1 --barquette carton              # dry run
 python commander.py --menu 1 --barquette carton --bon bon.html
 python commander.py --menu 1 --barquette carton --execute    # commande réelle
 ```
+
+## Skill Claude
+
+`.claude/skills/delit-commande` pilote le parcours de commande complet en
+conversation (menu du jour → budget et envies → 3 propositions → coordonnées →
+bon de commande validé → commande). La skill **embarque sa propre copie** du code
+(`scripts/delit.py`, un seul fichier sans dépendance à ce dossier ni à pandas)
+pour rester autonome : toute correction de la logique de scraping ou de commande
+est à reporter des deux côtés.
+

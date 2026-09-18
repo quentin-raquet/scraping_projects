@@ -30,6 +30,28 @@ def list_url(list_id: str) -> str:
     return LIST_URL.format(list_id=list_id)
 
 
+def find_by_sku(session: requests.Session, sku: str) -> Optional[dict]:
+    """Find a catalog product from its sku.
+
+    The catalog search does not index the sku and the API exposes no lookup by
+    sku, so this only finds the products already bought by the account. For
+    anything else, search by name and pass the product itself to `add_to_list`.
+
+    Args:
+        session (requests.Session): Session returned by `scrap.login`.
+        sku (str): The sku, e.g. "NA0223".
+
+    Returns:
+        dict, optional: The product, None when it is not in the history.
+    """
+    categories = request_json(session, "GET", "/api/account/products").get("categories", [])
+    for category in categories:
+        for product in category.get("products", []):
+            if product.get("sku") == sku:
+                return product
+    return None
+
+
 def get_lists(session: requests.Session) -> list[dict]:
     """Get the bookmark lists of the account.
 
@@ -151,7 +173,8 @@ def main() -> None:
         "creer", parents=[common], help="create a list from search terms"
     )
     creer_parser.add_argument("nom", help="name of the list")
-    creer_parser.add_argument("--termes", nargs="+", required=True, help="search terms to add")
+    creer_parser.add_argument("--termes", nargs="+", default=[], help="search terms to add")
+    creer_parser.add_argument("--skus", nargs="+", default=[], help="exact skus to add")
 
     supprimer_parser = subparsers.add_parser(
         "supprimer", parents=[common], help="delete a list"
@@ -175,6 +198,8 @@ def main() -> None:
             print(f"  {item.get('sku')} | {item.get('name')}")
         print(list_url(args.list_id))
     elif args.command == "creer":
+        if not args.termes and not args.skus:
+            parser.error("give --termes or --skus")
         products = []
         for term in args.termes:
             found = search(session, term, "PRODUCT", limit=1).get("items", [])
@@ -182,7 +207,14 @@ def main() -> None:
                 print(f"  introuvable : {term}")
                 continue
             products.append(found[0])
-            print(f"  {found[0]['sku']} | {found[0]['name']} | {product_price(found[0])}")
+        for sku in args.skus:
+            found = find_by_sku(session, sku)
+            if found is None:
+                print(f"  introuvable : {sku}")
+                continue
+            products.append(found)
+        for product in products:
+            print(f"  {product['sku']} | {product['name']} | {product_price(product)}")
         if not args.execute:
             print(f"\nDry run : la liste « {args.nom} » n'a pas été créée.")
             return

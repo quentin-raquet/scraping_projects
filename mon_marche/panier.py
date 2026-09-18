@@ -356,7 +356,23 @@ def main() -> None:
     elif args.command in ("ajouter", "retirer"):
         quantity = args.quantite if args.command == "ajouter" else 0
         if args.id:
-            product_id, label = canonical_id(args.id), args.id
+            product_id = canonical_id(args.id)
+            # Look the id up so the line printed names the product, not the id.
+            found = next(
+                (
+                    product
+                    for product in search(session, " ".join(args.terme), "PRODUCT", limit=20).get(
+                        "items", []
+                    )
+                    if canonical_id(product["id"]) == product_id
+                ),
+                None,
+            )
+            label = (
+                f"{found['name']} ({found['sku']}, {product_price(found)})"
+                if found
+                else args.id
+            )
         else:
             product = resolve_product(session, " ".join(args.terme))
             product_id = canonical_id(product["id"])

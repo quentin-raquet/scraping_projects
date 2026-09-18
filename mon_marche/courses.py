@@ -254,16 +254,23 @@ def rank_candidates(
     """
     items = search(session, term, "PRODUCT", limit=limit).get("items", [])
     words = term_words(term)
-    candidates = []
-    for position, product in enumerate(items):
-        if not is_available(product):
-            continue
-        # Drop what the fuzzy search returned but has nothing to do with the term.
-        if words and not matched_words(product, words):
-            continue
-        score, reasons = score_product(product, preferences, position, words)
-        candidates.append({**product, "score": score, "reasons": reasons})
-    return sorted(candidates, key=lambda candidate: -candidate["score"])
+
+    def build(filter_on_name: bool) -> list[dict]:
+        candidates = []
+        for position, product in enumerate(items):
+            if not is_available(product):
+                continue
+            # Drop what the fuzzy search returned but has nothing to do with the term.
+            if filter_on_name and words and not matched_words(product, words):
+                continue
+            score, reasons = score_product(product, preferences, position, words)
+            candidates.append({**product, "score": score, "reasons": reasons})
+        return sorted(candidates, key=lambda candidate: -candidate["score"])
+
+    # The name filter also drops the synonyms the catalog resolves on its own:
+    # "sopalin" returns the Essuie-tout, whose name holds none of the word. When
+    # it leaves nothing, the search engine knew better, so trust its results.
+    return build(True) or build(False)
 
 
 def is_ambiguous(candidates: list[dict]) -> bool:
@@ -378,6 +385,22 @@ def content_size(product: dict) -> str:
     return f"{weight['value']:g} {weight.get('unit', '')}".strip()
 
 
+def packaging(product: dict) -> str:
+    """Format how a product is packed.
+
+    For the products sold by the pack the count is not in `packSize` but in
+    `itemDefinition.terminologyOverride`, e.g. "12 rouleaux", "Pack de 3".
+
+    Args:
+        product (dict): A catalog product.
+
+    Returns:
+        str: The packaging, empty when the API gives none.
+    """
+    override = (product.get("itemDefinition") or {}).get("terminologyOverride") or ""
+    return "" if override in ("Bouteille", "Bidon") else override
+
+
 def product_image(product: dict) -> str:
     """Get the picture URL of a product.
 
@@ -406,8 +429,11 @@ def render_choices(selection: dict, path: str) -> None:
                 f'<span class="badge">{html.escape(reason)}</span>'
                 for reason in candidate["reasons"]
             )
-            size, per_unit = content_size(candidate), unit_price(candidate)
-            details = " · ".join(part for part in (size, per_unit) if part)
+            details = " · ".join(
+                part
+                for part in (packaging(candidate), content_size(candidate), unit_price(candidate))
+                if part
+            )
             cards.append(
                 f"""<figure class="card">
     <img src="{html.escape(product_image(candidate))}" alt="{html.escape(candidate['name'])}" loading="lazy">
@@ -505,11 +531,19 @@ def print_selection(selection: dict) -> None:
             print(f"  {question['terme']} :")
             for candidate in question["candidats"]:
                 reasons = ", ".join(candidate["reasons"]) or "-"
-                per_unit = unit_price(candidate)
+                details = " · ".join(
+                    part
+                    for part in (
+                        packaging(candidate),
+                        content_size(candidate),
+                        unit_price(candidate),
+                    )
+                    if part
+                )
                 print(
                     f"    {candidate['sku']} | {candidate['name']} | "
                     f"{product_price(candidate)}"
-                    f"{' | ' + per_unit if per_unit else ''} | {reasons}"
+                    f"{' | ' + details if details else ''} | {reasons}"
                 )
     if selection.get("boucher"):
         print(f"\nPour le boucher ({len(selection['boucher'])}), hors panier :")

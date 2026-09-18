@@ -79,6 +79,9 @@ Points d'attention :
 - la quantité est un nombre d'articles dans l'unité `granularity` du produit
   (pièces, bocaux…). Pour un produit vendu au poids, le prix suit le poids :
   2 citrons de 160 g à 3,99 € / kg = 1,28 € ;
+- **le conditionnement n'est pas dans `packSize`** mais dans
+  `itemDefinition.terminologyOverride` : « 12 rouleaux », « Pack de 3 ». C'est
+  souvent le champ décisif (papier toilette, essuie-tout, œufs) ;
 - la recherche catalogue **n'indexe pas le SKU** : chercher `FL2846` ne renvoie
   rien, il faut chercher par nom puis lire le `canonicalId` ;
 - `DELETE /api/cart` vide les produits mais **conserve le panier et son

@@ -141,7 +141,44 @@ python panier.py vider --execute
   adresse du compte et le premier créneau libre ; `--creneau <id>` (pris dans
   `panier.py creneaux`) permet d'en choisir un autre ;
 - `--id` court-circuite la recherche catalogue quand on connaît le
-  `canonicalId`, utile si la recherche par nom est ambiguë.
+  `canonicalId`, utile si la recherche par nom est ambiguë ;
+- `panier.py creneau <id> --execute` change le créneau d'un panier existant.
+
+### Liste de courses
+
+`courses.py` transforme une liste de termes en panier, en tranchant entre les
+produits du catalogue à partir des préférences du compte :
+
+```
+python courses.py "tomate cerise" "mozzarella:2" "pesto genovese"
+python courses.py --liste liste.json --out choix.html --json selection.json
+python courses.py --selection selection.json --creneau mov89ouSRu --execute
+```
+
+Le classement d'un candidat :
+
+| Signal | Points |
+| --- | --- |
+| déjà commandé (sku dans `/api/account/products`) | +60 |
+| dans les tops du compte (`/api/account/top-products`) | +30 au premier, dégressif |
+| label BIO (`labels` contenant « BIO ») | +25 |
+| origine France (`origin` contenant « France ») | +20 |
+| AOP, IGP, Label Rouge, HVE | +10 chacun |
+| mot du terme retrouvé dans le nom | +8 par mot |
+| rang dans les résultats du catalogue | -2 par place |
+
+Un terme est laissé **au choix de l'utilisateur** quand les deux meilleurs
+candidats se tiennent à moins de 15 points, ou quand le meilleur ne coche aucun
+critère. `--out` écrit alors une page HTML avec les photos, le prix, le SKU et
+les raisons, pour trancher à l'œil ; `--selection` relit la sélection corrigée.
+
+La recherche catalogue est floue (elle renvoie un cottage cheese pour
+« tomate cerise »), d'où le filtre qui exige qu'au moins un mot du terme se
+retrouve dans le nom ou la catégorie du produit.
+
+À noter : la **commande minimum de la zone de livraison est de 40 €**
+(`minOrderAmount` de la zone), et le panier affiche
+`minOrderAmountReached: false` tant qu'elle n'est pas atteinte.
 
 ## Périmètre
 

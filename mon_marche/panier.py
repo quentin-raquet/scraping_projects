@@ -332,6 +332,11 @@ def main() -> None:
     retirer_parser.add_argument("terme", nargs="+", help="product name, or --id")
     retirer_parser.add_argument("--id", help="canonical id, skips the catalog search")
 
+    creneau_parser = subparsers.add_parser(
+        "creneau", parents=[common], help="book another delivery slot"
+    )
+    creneau_parser.add_argument("slot_id", help="slot id, from `panier.py creneaux`")
+
     subparsers.add_parser("vider", parents=[common], help="empty the cart")
 
     args = parser.parse_args()
@@ -368,6 +373,24 @@ def main() -> None:
                 f"({format_timestamp(booked.get('from'))})"
             )
         payload = set_product_quantity(session, product_id, quantity)
+        print_cart(payload)
+    elif args.command == "creneau":
+        addresses = get_addresses(session)
+        if not addresses:
+            raise Exception("No delivery address on the account")
+        slots = available_slots(get_delivery_zones(session, addresses[0]))
+        slot = next((s for s in slots if s.get("id") == args.slot_id), None)
+        if slot is None:
+            raise Exception(f"Slot {args.slot_id} is unknown or not bookable")
+        print(
+            f"Créneau : {format_timestamp(slot.get('from'))} → "
+            f"{format_timestamp(slot.get('to'))} "
+            f"(frais {format_price(slot.get('activeDeliveryPrice'))})"
+        )
+        if not args.execute:
+            print("Dry run, le créneau n'a pas été changé. Relancer avec --execute.")
+            return
+        payload = set_delivery(session, addresses[0], slot)
         print_cart(payload)
     elif args.command == "vider":
         if not args.execute:

@@ -471,6 +471,57 @@ def quantity_meaning(product: dict) -> str:
     return f"1 = {article}{label}"
 
 
+def find_recipe(session: requests.Session, name: str) -> Optional[dict]:
+    """Find a recipe of the site from its name.
+
+    Args:
+        session (requests.Session): Session returned by `scrap.login`.
+        name (str): Recipe name, e.g. "mousse au chocolat".
+
+    Returns:
+        dict, optional: The best matching recipe, None when nothing matches.
+    """
+    found = search(session, name, "RECIPE", limit=5).get("items", [])
+    return found[0] if found else None
+
+
+def recipe_ingredients(session: requests.Session, recipe_id: str) -> tuple[dict, list[dict]]:
+    """Read a recipe and the catalog products of its ingredients.
+
+    Each ingredient of a recipe carries the `article` it maps to, with its slug,
+    so a meal idea resolves to real cart lines without guessing.
+
+    Args:
+        session (requests.Session): Session returned by `scrap.login`.
+        recipe_id (str): Id of the recipe.
+
+    Returns:
+        tuple: The recipe and its ingredients, each with the catalog `produit`
+            when the recipe links one.
+    """
+    recipe = request_json(session, "GET", f"/api/recipe/{recipe_id}")
+    ingredients = []
+    for ingredient in recipe.get("ingredients", []):
+        article = ingredient.get("article") or {}
+        product = {}
+        if article.get("slug"):
+            product = request_json(
+                session,
+                "GET",
+                f"/api/articleDetailBySlug/{article['slug']}",
+                allow_status=(404,),
+            )
+            product = product if isinstance(product, dict) and "sku" in product else {}
+        ingredients.append(
+            {
+                "nom": ingredient.get("name"),
+                "quantite": ingredient.get("quantity"),
+                "produit": product,
+            }
+        )
+    return recipe, ingredients
+
+
 def get_details(session: requests.Session, product: dict) -> dict:
     """Read the detail page of a product.
 
@@ -804,6 +855,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Fill a mon-marche.fr cart from a list")
     parser.add_argument("termes", nargs="*", help='search terms, "terme:quantite" allowed')
     parser.add_argument("--liste", help="JSON file holding the shopping list")
+    parser.add_argument("--recette", help="resolve the ingredients of a recipe of the site")
     parser.add_argument("--selection", help="JSON file of a selection to reuse")
     parser.add_argument("--out", help="write the ambiguous terms to this HTML file")
     parser.add_argument(
@@ -832,6 +884,22 @@ def main() -> None:
     args = parser.parse_args()
 
     session, _ = login()
+
+    if args.recette:
+        recipe = find_recipe(session, args.recette)
+        if recipe is None:
+            raise Exception(f"No recipe found for « {args.recette} »")
+        recipe, ingredients = recipe_ingredients(session, recipe["id"])
+        print(f"{recipe['name']} — {recipe.get('servings')} parts")
+        for ingredient in ingredients:
+            product = ingredient["produit"]
+            shelf = (
+                f"{product['sku']} | {product['name']} | {product_price(product)}"
+                if product
+                else "aucun article lié"
+            )
+            print(f"  {ingredient['quantite']:>10} {ingredient['nom']:16s} → {shelf}")
+        return
 
     if args.selection:
         with open(args.selection, encoding="utf-8") as file:

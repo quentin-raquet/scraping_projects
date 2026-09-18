@@ -207,6 +207,25 @@ La recherche catalogue est floue (elle renvoie un cottage cheese pour
 « tomate cerise »), d'où le filtre qui exige qu'au moins un mot du terme se
 retrouve dans le nom ou la catégorie du produit.
 
+### Recettes
+
+Le site publie ses recettes avec, pour chaque ingrédient, **l'article du
+catalogue correspondant** : une idée de repas se résout donc en lignes de panier
+sans rien deviner.
+
+```
+GET /api/search2?text=mousse+au+chocolat&type=RECIPE   → id de la recette
+GET /api/recipe/<id>                                   → ingredients[].article.slug
+GET /api/articleDetailBySlug/<slug>                    → le produit et son prix
+```
+
+```
+python courses.py --recette "mousse au chocolat"
+```
+
+La recette donne aussi `servings`, `preparationTime`, `cookingTime` et `steps`
+(du HTML), de quoi calculer les quantités pour un nombre de parts.
+
 ### Contrôle de composition
 
 `GET /api/articleDetailBySlug/<slug>` renvoie une fiche plus riche que la

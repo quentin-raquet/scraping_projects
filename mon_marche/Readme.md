@@ -172,8 +172,12 @@ Toulouse » atterrissait sur une saucisse de Francfort BIO.
 
 Un terme est laissé **au choix de l'utilisateur** quand les deux meilleurs
 candidats se tiennent à moins de 15 points, ou quand le meilleur ne coche aucun
-critère. `--out` écrit alors une page HTML avec les photos, le prix, le SKU et
-les raisons, pour trancher à l'œil ; `--selection` relit la sélection corrigée.
+critère. `--out` écrit alors une page HTML avec les photos, la contenance, le prix au
+litre ou au kilo (`weightPrice.unitPrice`, seule façon de comparer un flacon de
+25 cl à un bidon de 3 L), le SKU et les raisons ; `--favoris "<nom>"` fait mieux
+et pousse les candidats dans une liste de favoris du site, ce qui donne un lien
+mon-marche.fr avec les vraies fiches produit et les boutons d'ajout au panier.
+`--selection` relit ensuite la sélection corrigée.
 
 La recherche catalogue est floue (elle renvoie un cottage cheese pour
 « tomate cerise »), d'où le filtre qui exige qu'au moins un mot du terme se
@@ -210,6 +214,36 @@ défaut (jambon, lardons). Une ligne de liste peut aussi forcer le routage avec
 À noter : la **commande minimum de la zone de livraison est de 40 €**
 (`minOrderAmount` de la zone), et le panier affiche
 `minOrderAmountReached: false` tant qu'elle n'est pas atteinte.
+
+## Listes de favoris
+
+`favoris.py` pilote les listes de favoris du compte, qui servent de support de
+partage : une liste s'affiche sur le site à
+`/client/favoris/liste/<id>`, avec photos, prix et boutons d'ajout au panier.
+
+| Endpoint | Rôle |
+| --- | --- |
+| `GET /api/account/bookmarks-lists` | les listes du compte |
+| `POST /api/account/bookmarks-lists` | crée une liste, corps `{"name": …}` |
+| `GET /api/account/bookmarks-lists/<id>` | une liste et ses produits |
+| `PATCH /api/account/bookmarks-lists/<id>` | renomme |
+| `DELETE /api/account/bookmarks-lists/<id>` | supprime |
+| `POST /api/account/bookmarks-lists/<id>/bookmarks` | ajoute des produits |
+| `DELETE /api/account/bookmarks-lists/<id>/bookmarks/<bookmarkId>` | retire un produit |
+
+L'ajout attend `{"bookmarks": [{"type": "PRODUCT", "articleId": <canonicalId>}]}` —
+le même `canonicalId` que le panier, pas le SKU.
+
+```
+python favoris.py lister
+python favoris.py voir <listId>
+python favoris.py creer "Apéro" --termes "olives" "houmous" --execute
+python favoris.py supprimer <listId> --execute
+```
+
+La page d'une liste est **privée** : elle exige d'être connecté au compte
+propriétaire, sinon le site redirige en 308 vers `/?login=true&redirect=…`.
+Ce n'est donc pas un lien de partage public.
 
 ## Périmètre
 

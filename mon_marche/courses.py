@@ -20,6 +20,7 @@ from typing import Optional
 
 import requests
 
+from favoris import publish_products
 from panier import canonical_id, ensure_cart, print_cart, set_products_quantities
 from scrap import format_price, get_json, login, product_price, search
 
@@ -577,6 +578,12 @@ def main() -> None:
     parser.add_argument("--liste", help="JSON file holding the shopping list")
     parser.add_argument("--selection", help="JSON file of a selection to reuse")
     parser.add_argument("--out", help="write the ambiguous terms to this HTML file")
+    parser.add_argument(
+        "--favoris",
+        nargs="?",
+        const="À choisir",
+        help="put the ambiguous candidates on a mon-marche.fr bookmark list and print its URL",
+    )
     parser.add_argument("--json", help="write the selection to this JSON file")
     parser.add_argument("--creneau", help="delivery slot id, if the cart must be created")
     parser.add_argument(
@@ -613,6 +620,19 @@ def main() -> None:
     if args.out and selection["a_choisir"]:
         render_choices(selection, args.out)
         print(f"\nPage de choix écrite dans {args.out}")
+    if args.favoris and selection["a_choisir"]:
+        candidates = [
+            candidate
+            for question in selection["a_choisir"]
+            for candidate in question["candidats"]
+        ]
+        if not args.execute:
+            print(
+                f"\nDry run : la liste « {args.favoris} » "
+                f"({len(candidates)} produits) n'a pas été créée."
+            )
+        else:
+            print(f"\n{publish_products(session, args.favoris, candidates)}")
     if args.json:
         with open(args.json, "w", encoding="utf-8") as file:
             json.dump(selection, file, ensure_ascii=False, indent=2)

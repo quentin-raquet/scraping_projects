@@ -21,7 +21,7 @@ from typing import Optional
 import requests
 
 from panier import canonical_id, ensure_cart, print_cart, set_products_quantities
-from scrap import get_json, login, product_price, search
+from scrap import format_price, get_json, login, product_price, search
 
 # A product is organic when one of its labels mentions BIO ("Label BIO AB",
 # "Label BIO UE").
@@ -325,7 +325,7 @@ def build_selection(
             )
         elif is_ambiguous(candidates):
             selection["a_choisir"].append(
-                {"terme": term, "quantite": quantity, "candidats": candidates[:6]}
+                {"terme": term, "quantite": quantity, "candidats": candidates[:8]}
             )
         else:
             best = candidates[0]
@@ -342,6 +342,39 @@ def build_selection(
                 }
             )
     return selection
+
+
+def unit_price(product: dict) -> str:
+    """Format the price per litre or per kilo of a product.
+
+    The API gives it in `weightPrice.unitPrice`, which is what makes a 25 cl
+    bottle comparable to a 3 l can.
+
+    Args:
+        product (dict): A catalog product.
+
+    Returns:
+        str: The price per unit, empty when the API gives none.
+    """
+    weight = product.get("weightPrice") or {}
+    if not weight.get("unitPrice") or not weight.get("unit"):
+        return ""
+    return f"{format_price(weight['unitPrice'])} / {weight['unit']}"
+
+
+def content_size(product: dict) -> str:
+    """Format the size of one item of a product.
+
+    Args:
+        product (dict): A catalog product.
+
+    Returns:
+        str: The content, e.g. "0.75 l", empty when the API gives none.
+    """
+    weight = (product.get("itemDefinition") or {}).get("weight") or {}
+    if not weight.get("value"):
+        return ""
+    return f"{weight['value']:g} {weight.get('unit', '')}".strip()
 
 
 def product_image(product: dict) -> str:
@@ -372,12 +405,15 @@ def render_choices(selection: dict, path: str) -> None:
                 f'<span class="badge">{html.escape(reason)}</span>'
                 for reason in candidate["reasons"]
             )
+            size, per_unit = content_size(candidate), unit_price(candidate)
+            details = " · ".join(part for part in (size, per_unit) if part)
             cards.append(
                 f"""<figure class="card">
     <img src="{html.escape(product_image(candidate))}" alt="{html.escape(candidate['name'])}" loading="lazy">
     <figcaption>
       <strong>{html.escape(candidate['name'])}</strong>
       <span class="price">{html.escape(product_price(candidate))}</span>
+      <span class="unit">{html.escape(details)}</span>
       <span class="sku">{html.escape(candidate['sku'])}</span>
       <div class="badges">{badges}</div>
     </figcaption>
@@ -411,6 +447,7 @@ def render_choices(selection: dict, path: str) -> None:
   .card img {{ width:100%; aspect-ratio:1; object-fit:cover; background:#efece5; }}
   figcaption {{ padding:10px; display:flex; flex-direction:column; gap:4px; font-size:.82rem; }}
   .price {{ color:var(--accent); font-weight:600; }}
+  .unit {{ color:#8a8578; font-size:.75rem; }}
   .sku {{ color:#8a8578; font-size:.75rem; font-family:ui-monospace, monospace; }}
   .badges {{ display:flex; flex-wrap:wrap; gap:4px; margin-top:4px; }}
   .badge {{ background:var(--accent); color:var(--bg); border-radius:99px;
@@ -467,9 +504,11 @@ def print_selection(selection: dict) -> None:
             print(f"  {question['terme']} :")
             for candidate in question["candidats"]:
                 reasons = ", ".join(candidate["reasons"]) or "-"
+                per_unit = unit_price(candidate)
                 print(
                     f"    {candidate['sku']} | {candidate['name']} | "
-                    f"{product_price(candidate)} | {reasons}"
+                    f"{product_price(candidate)}"
+                    f"{' | ' + per_unit if per_unit else ''} | {reasons}"
                 )
     if selection.get("boucher"):
         print(f"\nPour le boucher ({len(selection['boucher'])}), hors panier :")

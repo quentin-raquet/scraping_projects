@@ -175,6 +175,7 @@ Le classement d'un candidat :
 | --- | --- |
 | déjà commandé (sku dans `/api/account/products`) | +60 |
 | dans les tops du compte (`/api/account/top-products`) | +30 au premier, dégressif |
+| marque déjà achetée, sur un produit jamais pris | +18 |
 | label BIO (`labels` contenant « BIO ») | +25 |
 | origine France (`origin` contenant « France ») | +20 |
 | AOP, IGP, Label Rouge, HVE | +10 chacun |
@@ -183,6 +184,12 @@ Le classement d'un candidat :
 
 Le bonus de nom passe devant le bonus bio à dessein : sans lui, « saucisse de
 Toulouse » atterrissait sur une saucisse de Francfort BIO.
+
+Le bonus de marque couvre le « produit similaire dans l'historique » sans SKU
+identique : **le catalogue met la marque entre guillemets doubles** dans le nom
+(`L'Essuie-tout "Renova"`), ce qui la rend extractible. Un gel douche
+« Le Petit Marseillais » déjà acheté suffit ainsi à désigner la recharge de
+savon mains de la même marque.
 
 Un terme est laissé **au choix de l'utilisateur** quand les deux meilleurs
 candidats se tiennent à moins de 15 points, ou quand le meilleur ne coche aucun

@@ -20,6 +20,7 @@ from scrap import (
     format_price,
     format_timestamp,
     get_addresses,
+    get_json,
     login,
     product_price,
     request_json,
@@ -201,6 +202,35 @@ def canonical_id(product_id: str) -> str:
     return product_id.split("$")[0]
 
 
+def resolve_sku(session: requests.Session, sku: str, hint: str = "") -> dict:
+    """Find a catalog product from its sku.
+
+    The catalog search does not index the sku, so the product is looked for in
+    the account history first, then in the results of a search on `hint`.
+
+    Args:
+        session (requests.Session): Session returned by `scrap.login`.
+        sku (str): The sku, e.g. "EP0568".
+        hint (str): Search term naming the product, used when the account has
+            never bought it.
+
+    Returns:
+        dict: The product carrying that sku.
+    """
+    categories = get_json(session, "/api/account/products").get("categories", [])
+    for category in categories:
+        for product in category.get("products", []):
+            if product.get("sku") == sku:
+                return product
+    if hint:
+        for product in search(session, hint, "PRODUCT", limit=20).get("items", []):
+            if product.get("sku") == sku:
+                return product
+    raise Exception(
+        f"Sku {sku} not found; it is not in the history, pass a term naming it as well"
+    )
+
+
 def resolve_product(session: requests.Session, term: str) -> dict:
     """Find a catalog product from a search term.
 
@@ -323,6 +353,7 @@ def main() -> None:
     )
     ajouter_parser.add_argument("terme", nargs="+", help="product name, or --id")
     ajouter_parser.add_argument("--id", help="canonical id, skips the catalog search")
+    ajouter_parser.add_argument("--sku", help="sku, looked up in the history then in the terms")
     ajouter_parser.add_argument("--quantite", type=int, default=1, help="number of items")
     ajouter_parser.add_argument("--creneau", help="delivery slot id, if the cart must be created")
 
@@ -331,6 +362,7 @@ def main() -> None:
     )
     retirer_parser.add_argument("terme", nargs="+", help="product name, or --id")
     retirer_parser.add_argument("--id", help="canonical id, skips the catalog search")
+    retirer_parser.add_argument("--sku", help="sku, looked up in the history then in the terms")
 
     creneau_parser = subparsers.add_parser(
         "creneau", parents=[common], help="book another delivery slot"
@@ -355,7 +387,11 @@ def main() -> None:
         print_slots(payload)
     elif args.command in ("ajouter", "retirer"):
         quantity = args.quantite if args.command == "ajouter" else 0
-        if args.id:
+        if getattr(args, "sku", None):
+            product = resolve_sku(session, args.sku, " ".join(args.terme))
+            product_id = canonical_id(product["id"])
+            label = f"{product['name']} ({product['sku']}, {product_price(product)})"
+        elif args.id:
             product_id = canonical_id(args.id)
             # Look the id up so the line printed names the product, not the id.
             found = next(

@@ -37,6 +37,10 @@ AMBIGUITY_GAP = 15
 # BC boucherie, CH charcuterie, MA marée, FR fromagerie, FL fruits et légumes,
 # LS crèmerie, EP épicerie, TB traiteur, NA non alimentaire.
 BUTCHER_PREFIXES = ("BC",)
+# The catalog puts the brand of a product between double quotes in its name:
+# 'L\'Essuie-tout "Renova"', 'Le Gel douche lait d\'amande douce XL "Le Petit
+# Marseillais"'.
+BRAND_PATTERN = re.compile(r'"([^"]+)"')
 # Words too short or too common to tell two products apart.
 STOP_WORDS = {"de", "du", "des", "la", "le", "les", "au", "aux", "en", "et", "a"}
 
@@ -62,7 +66,25 @@ def load_preferences(session: requests.Session) -> dict:
     return {
         "bought": bought,
         "top": {product["sku"]: rank for rank, product in enumerate(top) if product.get("sku")},
+        "brands": {
+            brand
+            for product in bought.values()
+            for brand in BRAND_PATTERN.findall(product.get("name", ""))
+        },
     }
+
+
+def product_brand(product: dict) -> str:
+    """Read the brand of a product from its name.
+
+    Args:
+        product (dict): A catalog product.
+
+    Returns:
+        str: The brand, empty when the name quotes none.
+    """
+    found = BRAND_PATTERN.findall(product.get("name", ""))
+    return found[0] if found else ""
 
 
 def is_bio(product: dict) -> bool:
@@ -227,6 +249,12 @@ def score_product(
         rank = preferences["top"][sku]
         score += max(30 - rank, 5)
         reasons.append(f"top produit #{rank + 1}")
+    # "a similar product in the history" is not only the same sku: a brand
+    # already bought is a preference too, and the catalog quotes the brand.
+    brand = product_brand(product)
+    if sku not in preferences["bought"] and brand and brand in preferences.get("brands", set()):
+        score += 18
+        reasons.append(f"marque déjà achetée ({brand})")
     if is_bio(product):
         score += 25
         reasons.append("bio")
@@ -428,9 +456,12 @@ def quantity_meaning(product: dict) -> str:
     size = f"{weight['value']:g} {weight.get('unit', '')}".strip() if weight.get("value") else ""
     if definition.get("type") == "arbitraryQuantity" and size:
         return f"1 = {size}"
+    # A terminologyOverride is often already a count ("6 rouleaux"), so an
+    # article prefix would read "1 = 1 6 rouleaux".
+    article = "" if label[:1].isdigit() else "1 "
     if definition.get("type") == "pieceWeight" and size:
-        return f"1 = 1 {label} de {size}"
-    return f"1 = 1 {label}"
+        return f"1 = {article}{label} de {size}"
+    return f"1 = {article}{label}"
 
 
 def product_image(product: dict) -> str:

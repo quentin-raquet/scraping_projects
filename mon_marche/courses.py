@@ -22,7 +22,7 @@ import requests
 
 from favoris import publish_products
 from panier import canonical_id, ensure_cart, print_cart, set_products_quantities
-from scrap import format_price, get_json, login, product_price, search
+from scrap import format_price, login, product_price, request_json, search
 
 # A product is organic when one of its labels mentions BIO ("Label BIO AB",
 # "Label BIO UE").
@@ -41,6 +41,12 @@ BUTCHER_PREFIXES = ("BC",)
 # 'L\'Essuie-tout "Renova"', 'Le Gel douche lait d\'amande douce XL "Le Petit
 # Marseillais"'.
 BRAND_PATTERN = re.compile(r'"([^"]+)"')
+# Sweeteners counted as added sugar on an ingredient list.
+ADDED_SUGAR_PATTERN = re.compile(
+    r"\b(sucres?|dextrose|glucose|fructose|saccharose|maltodextrine|miel|"
+    r"sirop (?:de|d')[a-zéè ]+)\b",
+    re.IGNORECASE,
+)
 # Words too short or too common to tell two products apart.
 STOP_WORDS = {"de", "du", "des", "la", "le", "les", "au", "aux", "en", "et", "a"}
 
@@ -55,14 +61,14 @@ def load_preferences(session: requests.Session) -> dict:
         dict: `bought` maps a sku to its product, `top` maps a sku to its rank
             in the most ordered products (0 is the most ordered).
     """
-    categories = get_json(session, "/api/account/products").get("categories", [])
+    categories = request_json(session, "GET", "/api/account/products").get("categories", [])
     bought = {
         product["sku"]: product
         for category in categories
         for product in category.get("products", [])
         if product.get("sku")
     }
-    top = get_json(session, "/api/account/top-products").get("items", [])
+    top = request_json(session, "GET", "/api/account/top-products").get("items", [])
     return {
         "bought": bought,
         "top": {product["sku"]: rank for rank, product in enumerate(top) if product.get("sku")},
@@ -375,6 +381,7 @@ def build_selection(
                     "quantite": quantity,
                     "id": canonical_id(best["id"]),
                     "sku": best["sku"],
+                    "slug": best["slug"],
                     "nom": best["name"],
                     "prix": product_price(best),
                     "prix_article": best.get("itemPrice"),
@@ -462,6 +469,72 @@ def quantity_meaning(product: dict) -> str:
     if definition.get("type") == "pieceWeight" and size:
         return f"1 = {article}{label} de {size}"
     return f"1 = {article}{label}"
+
+
+def get_details(session: requests.Session, product: dict) -> dict:
+    """Read the detail page of a product.
+
+    The search results carry no ingredient list; the detail endpoint does, under
+    the `liste-ingredient` attribute.
+
+    Args:
+        session (requests.Session): Session returned by `scrap.login`.
+        product (dict): A catalog product, carrying a `slug`.
+
+    Returns:
+        dict: The detailed product, empty when the slug resolves to nothing.
+    """
+    slug = product.get("slug")
+    if not slug:
+        return {}
+    details = request_json(
+        session, "GET", f"/api/articleDetailBySlug/{slug}", allow_status=(404,)
+    )
+    return details if isinstance(details, dict) and "attributes" in details else {}
+
+
+def ingredient_list(session: requests.Session, product: dict) -> str:
+    """Read the ingredient list of a product.
+
+    Args:
+        session (requests.Session): Session returned by `scrap.login`.
+        product (dict): A catalog product, carrying a `slug`.
+
+    Returns:
+        str: The ingredients, empty when the product declares none.
+    """
+    details = get_details(session, product)
+    raw = next(
+        (
+            attribute.get("value", "")
+            for attribute in details.get("attributes") or []
+            if attribute.get("key") == "liste-ingredient"
+        ),
+        "",
+    )
+    return html.unescape(raw)
+
+
+def added_sugars(session: requests.Session, product: dict) -> tuple[str, list[str]]:
+    """Say whether a product declares added sugar.
+
+    Many products declare no ingredient list at all. Reading that silence as
+    "no sugar" would let a sweetened product through a dietary constraint, so
+    it is reported apart.
+
+    Args:
+        session (requests.Session): Session returned by `scrap.login`.
+        product (dict): A catalog product, carrying a `slug`.
+
+    Returns:
+        tuple: The status, one of "avec", "sans" or "inconnu", and the
+            sweeteners found.
+    """
+    ingredients = ingredient_list(session, product)
+    if not ingredients.strip():
+        return "inconnu", []
+    found = sorted({match.strip().lower() for match in ADDED_SUGAR_PATTERN.findall(ingredients)})
+    return ("avec", found) if found else ("sans", [])
 
 
 def product_image(product: dict) -> str:
@@ -570,6 +643,61 @@ def render_butcher_list(selection: dict, path: str) -> None:
         file.write("\n".join(lines))
 
 
+def filter_added_sugar(
+    session: requests.Session, selection: dict, preferences: dict
+) -> None:
+    """Drop the candidates whose ingredient list declares a sweetener, in place.
+
+    A term whose every candidate is sweetened keeps them, flagged
+    `sans_sucre_impossible`: the constraint failing has to be visible rather
+    than silently emptying the line.
+
+    Args:
+        session (requests.Session): Session returned by `scrap.login`.
+        selection (dict): The selection returned by `build_selection`.
+        preferences (dict): The preferences, to re-rank a rejected term.
+    """
+    still_decided, now_open = [], []
+    for line in selection["retenus"]:
+        status, sugars = added_sugars(session, line)
+        line["sucre"], line["sucres"] = status, sugars
+        (now_open if status != "sans" else still_decided).append(line)
+    selection["retenus"] = still_decided
+
+    for line in now_open:
+        # The line had no candidate list, being decided; rebuild it to offer
+        # the alternatives rather than a bare rejection.
+        others = [
+            candidate
+            for candidate in rank_candidates(session, line["terme"], preferences)
+            if candidate["sku"] != line["sku"]
+        ][:8]
+        reason = ", ".join(line["sucres"]) if line["sucres"] else "composition non déclarée"
+        selection["a_choisir"].append(
+            {
+                "terme": line["terme"],
+                "quantite": line["quantite"],
+                "candidats": others,
+                "ecarte": f"{line['nom']} ({reason})",
+            }
+        )
+
+    for question in selection["a_choisir"]:
+        clean, unknown = [], []
+        for candidate in question["candidats"]:
+            status, sugars = added_sugars(session, candidate)
+            candidate["sucre"], candidate["sucres"] = status, sugars
+            if status == "sans":
+                candidate["reasons"] = candidate.get("reasons", []) + ["sans sucre ajouté"]
+                clean.append(candidate)
+            elif status == "inconnu":
+                candidate["reasons"] = candidate.get("reasons", []) + ["composition non déclarée"]
+                unknown.append(candidate)
+        # Confirmed first, unverifiable next, sweetened dropped.
+        question["candidats"] = clean + unknown
+        question["sans_sucre_impossible"] = not clean
+
+
 def print_selection(selection: dict) -> None:
     """Print the selection on the console.
 
@@ -592,6 +720,10 @@ def print_selection(selection: dict) -> None:
         print(f"\nÀ choisir ({len(selection['a_choisir'])}) :")
         for question in selection["a_choisir"]:
             print(f"  {question['terme']} :")
+            if question.get("ecarte"):
+                print(f"    écarté, sucre ajouté : {question['ecarte']}")
+            if question.get("sans_sucre_impossible"):
+                print("    ⚠ aucun candidat ne déclare une composition sans sucre ajouté")
             for candidate in question["candidats"]:
                 reasons = ", ".join(candidate["reasons"]) or "-"
                 details = " · ".join(
@@ -683,6 +815,11 @@ def main() -> None:
     parser.add_argument("--json", help="write the selection to this JSON file")
     parser.add_argument("--creneau", help="delivery slot id, if the cart must be created")
     parser.add_argument(
+        "--sans-sucre",
+        action="store_true",
+        help="drop the candidates whose ingredient list declares a sweetener",
+    )
+    parser.add_argument(
         "--boucher",
         help="write the meat lines, left out of the cart, to this markdown file",
     )
@@ -707,6 +844,8 @@ def main() -> None:
             prefix.strip().upper() for prefix in args.rayons_boucher.split(",") if prefix.strip()
         )
         selection = build_selection(session, wanted, load_preferences(session), prefixes)
+        if args.sans_sucre:
+            filter_added_sugar(session, selection, load_preferences(session))
 
     print_selection(selection)
 

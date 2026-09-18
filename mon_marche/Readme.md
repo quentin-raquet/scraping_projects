@@ -207,6 +207,29 @@ La recherche catalogue est floue (elle renvoie un cottage cheese pour
 « tomate cerise »), d'où le filtre qui exige qu'au moins un mot du terme se
 retrouve dans le nom ou la catégorie du produit.
 
+### Contrôle de composition
+
+`GET /api/articleDetailBySlug/<slug>` renvoie une fiche plus riche que la
+recherche, avec l'attribut `liste-ingredient` (échappé en HTML) et
+`denomination-legale`. `courses.py --sans-sucre` s'en sert pour écarter les
+candidats sucrés.
+
+Le résultat a **trois états**, pas deux :
+
+| État | Sens |
+| --- | --- |
+| `sans` | liste déclarée, aucun édulcorant trouvé |
+| `avec` | liste déclarée, édulcorant trouvé (sucre, dextrose, sirop…) |
+| `inconnu` | **aucune liste déclarée** |
+
+Beaucoup de produits ne déclarent rien : lire ce silence comme « sans sucre »
+laisserait passer un produit sucré sur une contrainte alimentaire. Les candidats
+`inconnu` sont donc listés après les `sans`, étiquetés « composition non
+déclarée », jamais confondus avec eux.
+
+`denomination-legale` vaut aussi le détour : « Le Fromage grec » du catalogue
+s'y déclare « fromage au lait pasteurisé de vache », ce n'est donc pas une feta.
+
 ### Rayons et liste boucher
 
 **Les deux premières lettres du SKU nomment le rayon** — vérifié en recoupant

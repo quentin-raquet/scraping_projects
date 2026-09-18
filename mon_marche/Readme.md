@@ -82,6 +82,17 @@ Points d'attention :
 - **le conditionnement n'est pas dans `packSize`** mais dans
   `itemDefinition.terminologyOverride` : « 12 rouleaux », « Pack de 3 ». C'est
   souvent le champ décisif (papier toilette, essuie-tout, œufs) ;
+- **`itemDefinition.type` décide de ce qu'achète une quantité**, et c'est le
+  piège principal :
+
+  | `type` | Quantité 2 achète |
+  | --- | --- |
+  | `piece` | 2 articles (2 bottes d'oignons blancs) |
+  | `pieceWeight` | 2 articles du poids indiqué (2 filets de 500 g) |
+  | `arbitraryQuantity` | 2 × le poids de référence, soit **1 kg** pour un oignon vendu par 500 g |
+
+  Un `arbitraryQuantity` n'a donc pas de « pièce » : impossible de commander
+  2 oignons rouges, le pas est de 500 g ;
 - la recherche catalogue **n'indexe pas le SKU** : chercher `FL2846` ne renvoie
   rien, il faut chercher par nom puis lire le `canonicalId` ;
 - `DELETE /api/cart` vide les produits mais **conserve le panier et son

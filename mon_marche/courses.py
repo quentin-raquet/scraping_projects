@@ -111,7 +111,11 @@ def normalize(text: str) -> str:
     Returns:
         str: The normalized text.
     """
-    stripped = unicodedata.normalize("NFD", text or "")
+    # NFD splits the accents off but leaves the ligatures alone, and the catalog
+    # writes "Les 12 Œufs BIO" where a search is typed "oeuf".
+    folded = (text or "").replace("œ", "oe").replace("Œ", "OE")
+    folded = folded.replace("æ", "ae").replace("Æ", "AE")
+    stripped = unicodedata.normalize("NFD", folded)
     return "".join(char for char in stripped if unicodedata.category(char) != "Mn").lower()
 
 
@@ -401,6 +405,34 @@ def packaging(product: dict) -> str:
     return "" if override in ("Bouteille", "Bidon") else override
 
 
+def quantity_meaning(product: dict) -> str:
+    """Say what one unit of quantity buys for a product.
+
+    `itemDefinition.type` decides how the site reads a quantity:
+      - `piece`: one item, e.g. a bunch of spring onions;
+      - `pieceWeight`: one item of a known weight, e.g. a 500 g net;
+      - `arbitraryQuantity`: a multiple of a reference weight, so a quantity of
+        2 on onions sold per 500 g buys a kilo, not two onions.
+
+    Args:
+        product (dict): A catalog product.
+
+    Returns:
+        str: What a quantity of 1 buys.
+    """
+    definition = product.get("itemDefinition") or {}
+    weight = definition.get("weight") or {}
+    label = definition.get("terminologyOverride") or (definition.get("terminology") or {}).get(
+        "singular", "pièce"
+    )
+    size = f"{weight['value']:g} {weight.get('unit', '')}".strip() if weight.get("value") else ""
+    if definition.get("type") == "arbitraryQuantity" and size:
+        return f"1 = {size}"
+    if definition.get("type") == "pieceWeight" and size:
+        return f"1 = 1 {label} de {size}"
+    return f"1 = 1 {label}"
+
+
 def product_image(product: dict) -> str:
     """Get the picture URL of a product.
 
@@ -431,7 +463,7 @@ def render_choices(selection: dict, path: str) -> None:
             )
             details = " · ".join(
                 part
-                for part in (packaging(candidate), content_size(candidate), unit_price(candidate))
+                for part in (quantity_meaning(candidate), unit_price(candidate))
                 if part
             )
             cards.append(
@@ -534,8 +566,7 @@ def print_selection(selection: dict) -> None:
                 details = " · ".join(
                     part
                     for part in (
-                        packaging(candidate),
-                        content_size(candidate),
+                        quantity_meaning(candidate),
                         unit_price(candidate),
                     )
                     if part

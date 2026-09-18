@@ -16,8 +16,9 @@ Located in the `delit` directory, this project contains scripts for scraping the
 
 ## Mon Marché
 
-Located in the `mon_marche` directory, this project contains a read only client
-of a mon-marche.fr customer account (profile, orders, favourites, catalog search).
+Located in the `mon_marche` directory, this project contains a client of a
+mon-marche.fr customer account: account and catalog reading (`scrap.py`) and
+cart handling (`panier.py`, dry run by default, no payment).
 
 ## Claude Skill
 

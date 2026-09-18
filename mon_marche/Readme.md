@@ -41,9 +41,51 @@ Les identifiants sont lus dans les variables d'environnement
 | `GET /api/loyalty/user` | solde de points de fidélité |
 | `GET /api/search2?text=…&type=PRODUCT` | recherche catalogue |
 
-Autres endpoints repérés dans le bundle JS mais non utilisés ici, car ils
-écrivent : `/api/cart*` (panier), `/api/cart/createPaymentIntent`,
-`/api/cart/initialOrder` (commande et paiement).
+Côté panier (`panier.py`) :
+
+| Endpoint | Rôle |
+| --- | --- |
+| `POST /api/addresses/deliverySlots2` | créneaux de livraison pour une adresse |
+| `PATCH /api/cart/delivery2` | choisit l'adresse et le créneau — **crée le panier** |
+| `GET /api/cart` | contenu du panier |
+| `PATCH /api/cart/product` | fixe la quantité d'un produit |
+| `PATCH /api/cart/products` | fixe les quantités de plusieurs produits d'un coup |
+| `DELETE /api/cart` | vide le panier |
+
+Endpoints de paiement volontairement laissés de côté :
+`PUT /api/cart/createPaymentIntent`, `PATCH /api/cart/initialOrder`,
+`PATCH /api/cart/finalizePrepay`.
+
+## Le panier
+
+Le panier est créé **paresseusement** : tant qu'aucun créneau de livraison n'a
+été choisi, tous les endpoints panier répondent 404 `E_08_0005`
+« Le panier est introuvable ». La séquence est donc :
+
+1. `POST /api/addresses/deliverySlots2` avec `{postalCode, countryCode, location}`
+   de l'adresse → les zones et leurs créneaux ;
+2. `PATCH /api/cart/delivery2` avec
+   `{"delivery": {"note": …, "address": {"formattedAddress", "location", "addressComponents"}}, "timeSlot": <le créneau entier>}`
+   → **crée le panier** et renvoie son contenu ;
+3. `PATCH /api/cart/product` avec `{"product": {"id": <canonicalId>, "quantity": n}}`.
+
+Points d'attention :
+
+- **l'id attendu est le `canonicalId`**, c'est-à-dire la partie avant le `$` d'un
+  id de catalogue (`QH9QWo2sF$rDyRbLxRPFibN8zcdLJN6` → `QH9QWo2sF`). Le front
+  fait exactement ce `split("$")[0]` avant d'appeler l'API ;
+- **la quantité est fixée, pas incrémentée** : envoyer `quantity: 3` sur une
+  ligne à 1 donne 3, pas 4. `quantity: 0` retire la ligne ;
+- la quantité est un nombre d'articles dans l'unité `granularity` du produit
+  (pièces, bocaux…). Pour un produit vendu au poids, le prix suit le poids :
+  2 citrons de 160 g à 3,99 € / kg = 1,28 € ;
+- la recherche catalogue **n'indexe pas le SKU** : chercher `FL2846` ne renvoie
+  rien, il faut chercher par nom puis lire le `canonicalId` ;
+- `DELETE /api/cart` vide les produits mais **conserve le panier et son
+  créneau** ;
+- dans le panier, la quantité d'une ligne est dans `quotation.count` et son
+  total dans `quotation2.totals.net` ; les totaux du panier sont dans
+  `price.quotation` (`net`, `shipping`, `preparationFee`, `preauthorization`).
 
 ## Points d'attention
 
@@ -82,9 +124,29 @@ python scrap.py recherche "curry" --type RECIPE # recherche recettes
 `--json fichier.json` ajoute le dump brut de la réponse à n'importe quelle
 sous-commande.
 
+### Panier
+
+```
+python panier.py voir                                  # contenu du panier
+python panier.py creneaux                              # créneaux de livraison
+python panier.py ajouter citron jaune --quantite 3     # dry run
+python panier.py ajouter citron jaune --quantite 3 --execute
+python panier.py ajouter "pesto genovese" --id 3F3d7dC1T --execute
+python panier.py retirer "pesto genovese" --execute
+python panier.py vider --execute
+```
+
+- **le dry run est le mode par défaut**, rien n'est écrit sans `--execute` ;
+- si aucun panier n'existe, `ajouter --execute` en crée un sur la première
+  adresse du compte et le premier créneau libre ; `--creneau <id>` (pris dans
+  `panier.py creneaux`) permet d'en choisir un autre ;
+- `--id` court-circuite la recherche catalogue quand on connaît le
+  `canonicalId`, utile si la recherche par nom est ambiguë.
+
 ## Périmètre
 
-`scrap.py` est **strictement en lecture**. Il ne touche pas au panier et ne passe
-aucune commande. Ajouter un parcours de commande (comme `delit/commander.py`)
-impliquerait un vrai paiement : à traiter séparément, avec une validation
-explicite avant l'envoi.
+`scrap.py` est strictement en lecture. `panier.py` écrit dans le panier —
+quantités, créneau de livraison — mais **ne paie rien et ne passe aucune
+commande** : les endpoints de paiement ne sont pas appelés. Ajouter un parcours
+de commande (comme `delit/commander.py`) impliquerait un vrai paiement : à
+traiter séparément, avec une validation explicite avant l'envoi.

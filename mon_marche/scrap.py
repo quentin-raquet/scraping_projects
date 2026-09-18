@@ -87,8 +87,48 @@ def login(email: Optional[str] = None, password: Optional[str] = None) -> tuple:
     return session, res.json()
 
 
-def get_json(session: requests.Session, path: str, params: Optional[dict] = None) -> Any:
+def request_json(
+    session: requests.Session,
+    method: str,
+    path: str,
+    params: Optional[dict] = None,
+    body: Optional[dict] = None,
+    allow_status: tuple = (),
+) -> Any:
     """Call a JSON endpoint of the site with the authenticated session.
+
+    Args:
+        session (requests.Session): Session returned by `login`.
+        method (str): HTTP method, e.g. "GET" or "PATCH".
+        path (str): Endpoint path, e.g. "/api/orders/past".
+        params (dict, optional): Query string parameters.
+        body (dict, optional): JSON body, for the writing methods.
+        allow_status (tuple): Status codes to return instead of raising.
+
+    Returns:
+        Any: The decoded JSON body.
+    """
+    res = session.request(
+        method,
+        f"{BASE_URL}{path}",
+        params=params,
+        json=body,
+        headers={"Referer": f"{BASE_URL}/"},
+        timeout=30,
+    )
+    if res.status_code != 200 and res.status_code not in allow_status:
+        try:
+            message = res.json().get("message", res.text[:200])
+        except ValueError:
+            message = res.text[:200]
+        raise Exception(
+            f"Bad request status code {res.status_code}, {method} {path} ({message})"
+        )
+    return res.json()
+
+
+def get_json(session: requests.Session, path: str, params: Optional[dict] = None) -> Any:
+    """Call a JSON endpoint of the site in GET.
 
     Args:
         session (requests.Session): Session returned by `login`.
@@ -98,11 +138,7 @@ def get_json(session: requests.Session, path: str, params: Optional[dict] = None
     Returns:
         Any: The decoded JSON body.
     """
-    res = session.get(f"{BASE_URL}{path}", params=params, timeout=30)
-    if res.status_code != 200:
-        message = res.json().get("message", res.text[:200])
-        raise Exception(f"Bad request status code {res.status_code}, path : {path} ({message})")
-    return res.json()
+    return request_json(session, "GET", path, params=params)
 
 
 def get_addresses(session: requests.Session) -> list[dict]:

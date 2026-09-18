@@ -164,8 +164,11 @@ Le classement d'un candidat :
 | label BIO (`labels` contenant « BIO ») | +25 |
 | origine France (`origin` contenant « France ») | +20 |
 | AOP, IGP, Label Rouge, HVE | +10 chacun |
-| mot du terme retrouvé dans le nom | +8 par mot |
+| mot du terme retrouvé dans le nom | +12 par mot, +20 si tous |
 | rang dans les résultats du catalogue | -2 par place |
+
+Le bonus de nom passe devant le bonus bio à dessein : sans lui, « saucisse de
+Toulouse » atterrissait sur une saucisse de Francfort BIO.
 
 Un terme est laissé **au choix de l'utilisateur** quand les deux meilleurs
 candidats se tiennent à moins de 15 points, ou quand le meilleur ne coche aucun
@@ -175,6 +178,34 @@ les raisons, pour trancher à l'œil ; `--selection` relit la sélection corrig�
 La recherche catalogue est floue (elle renvoie un cottage cheese pour
 « tomate cerise »), d'où le filtre qui exige qu'au moins un mot du terme se
 retrouve dans le nom ou la catégorie du produit.
+
+### Rayons et liste boucher
+
+**Les deux premières lettres du SKU nomment le rayon** — vérifié en recoupant
+les SKU avec les catégories de `/api/account/products` :
+
+| Préfixe | Rayon |
+| --- | --- |
+| `BC` | Boucherie |
+| `CH` | Charcuterie |
+| `MA` | Marée (poissonnerie) |
+| `FR` | Fromagerie |
+| `FL` | Fruits & Légumes |
+| `LS` | Crèmerie / libre-service frais |
+| `EP` | Épicerie |
+| `TB` | Traiteur |
+| `NA` | Non alimentaire |
+
+La viande n'est pas commandée ici : un terme dont le meilleur candidat est en
+`BC` — ou dont la moitié des meilleurs candidats le sont — sort du panier et va
+dans la liste boucher, écrite en markdown par `--boucher liste.md` avec
+l'équivalent Mon Marché et son prix comme repère. En cas d'égalité entre rayons,
+c'est le boucher qui gagne : ne pas commander de viande ici est une consigne
+explicite, une ligne mal routée se repère d'un coup d'œil.
+
+`--rayons-boucher BC,CH` y ajoute la charcuterie, qui reste sur Mon Marché par
+défaut (jambon, lardons). Une ligne de liste peut aussi forcer le routage avec
+`{"terme": "...", "boucher": true}`.
 
 À noter : la **commande minimum de la zone de livraison est de 40 €**
 (`minOrderAmount` de la zone), et le panier affiche

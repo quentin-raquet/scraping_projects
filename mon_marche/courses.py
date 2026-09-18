@@ -32,6 +32,10 @@ FRENCH_PATTERN = re.compile(r"france", re.IGNORECASE)
 QUALITY_PATTERN = re.compile(r"\b(AOP|IGP|Label Rouge|HVE)\b", re.IGNORECASE)
 # Score gap below which two candidates are considered too close to decide.
 AMBIGUITY_GAP = 15
+# The first two letters of a sku name the department of the product:
+# BC boucherie, CH charcuterie, MA marée, FR fromagerie, FL fruits et légumes,
+# LS crèmerie, EP épicerie, TB traiteur, NA non alimentaire.
+BUTCHER_PREFIXES = ("BC",)
 # Words too short or too common to tell two products apart.
 STOP_WORDS = {"de", "du", "des", "la", "le", "les", "au", "aux", "en", "et", "a"}
 
@@ -140,6 +144,39 @@ def matched_words(product: dict, words: list[str]) -> list[str]:
     return [word for word in words if word[:-1] in haystack or word in haystack]
 
 
+def is_butcher(product: dict, prefixes: tuple = BUTCHER_PREFIXES) -> bool:
+    """Tell whether a product belongs to the butcher department.
+
+    Args:
+        product (dict): A catalog product.
+        prefixes (tuple): Sku prefixes bought at the butcher instead.
+
+    Returns:
+        bool: True when its sku starts with one of the prefixes.
+    """
+    return (product.get("sku") or "").upper().startswith(tuple(prefixes))
+
+
+def goes_to_butcher(candidates: list[dict], prefixes: tuple = BUTCHER_PREFIXES) -> bool:
+    """Tell whether a term should go to the butcher list rather than the cart.
+
+    Args:
+        candidates (list): Candidates returned by `rank_candidates`.
+        prefixes (tuple): Sku prefixes bought at the butcher instead.
+
+    Returns:
+        bool: True when the term names meat.
+    """
+    top = candidates[:4]
+    if not top:
+        return False
+    if is_butcher(top[0], prefixes):
+        return True
+    # A term like "saucisse" mixes departments. On a tie the butcher wins: not
+    # ordering meat here is an explicit rule, a wrong routing is easy to spot.
+    return 2 * sum(is_butcher(candidate, prefixes) for candidate in top) >= len(top)
+
+
 def is_available(product: dict) -> bool:
     """Tell whether a product can be added to the cart.
 
@@ -169,9 +206,14 @@ def score_product(
     score, reasons = 0, []
     sku = product.get("sku")
 
-    # A product matching every word of the term is a closer answer.
+    # Naming the product asked for outweighs a generic bio or French bonus:
+    # "saucisse de toulouse" must not land on a Francfort because it is organic.
     if words:
-        score += 8 * len(matched_words(product, words))
+        found = matched_words(product, words)
+        score += 12 * len(found)
+        if len(found) == len(words):
+            score += 20
+            reasons.append("nom exact")
 
     if sku in preferences["bought"]:
         score += 60
@@ -247,7 +289,10 @@ def is_ambiguous(candidates: list[dict]) -> bool:
 
 
 def build_selection(
-    session: requests.Session, wanted: list[dict], preferences: dict
+    session: requests.Session,
+    wanted: list[dict],
+    preferences: dict,
+    butcher_prefixes: tuple = BUTCHER_PREFIXES,
 ) -> dict:
     """Turn a shopping list into picked products and open questions.
 
@@ -255,17 +300,29 @@ def build_selection(
         session (requests.Session): Session returned by `scrap.login`.
         wanted (list): Dicts with a `terme` and an optional `quantite`.
         preferences (dict): The preferences returned by `load_preferences`.
+        butcher_prefixes (tuple): Sku prefixes to route to the butcher list.
 
     Returns:
         dict: `retenus` holds the decided lines, `a_choisir` the ambiguous ones,
-            `introuvables` the terms with no result.
+            `boucher` the meat left out of the cart, `introuvables` the terms
+            with no result.
     """
-    selection: dict = {"retenus": [], "a_choisir": [], "introuvables": []}
+    selection: dict = {"retenus": [], "a_choisir": [], "boucher": [], "introuvables": []}
     for item in wanted:
         term, quantity = item["terme"], item.get("quantite", 1)
         candidates = rank_candidates(session, term, preferences)
         if not candidates:
             selection["introuvables"].append(term)
+        elif item.get("boucher") or goes_to_butcher(candidates, butcher_prefixes):
+            best = candidates[0]
+            selection["boucher"].append(
+                {
+                    "terme": term,
+                    "quantite": quantity,
+                    "reference": best["name"],
+                    "prix_indicatif": product_price(best),
+                }
+            )
         elif is_ambiguous(candidates):
             selection["a_choisir"].append(
                 {"terme": term, "quantite": quantity, "candidats": candidates[:6]}
@@ -368,6 +425,24 @@ def render_choices(selection: dict, path: str) -> None:
         file.write(page)
 
 
+def render_butcher_list(selection: dict, path: str) -> None:
+    """Write the meat lines to a markdown list to take to the butcher.
+
+    Args:
+        selection (dict): The selection returned by `build_selection`.
+        path (str): Path of the markdown file to write.
+    """
+    lines = ["# Liste boucher", ""]
+    for line in selection.get("boucher", []):
+        lines.append(f"- [ ] **{line['terme']}** × {line['quantite']}")
+        lines.append(
+            f"      _équivalent Mon Marché : {line['reference']} — {line['prix_indicatif']}_"
+        )
+    lines.append("")
+    with open(path, "w", encoding="utf-8") as file:
+        file.write("\n".join(lines))
+
+
 def print_selection(selection: dict) -> None:
     """Print the selection on the console.
 
@@ -396,6 +471,13 @@ def print_selection(selection: dict) -> None:
                     f"    {candidate['sku']} | {candidate['name']} | "
                     f"{product_price(candidate)} | {reasons}"
                 )
+    if selection.get("boucher"):
+        print(f"\nPour le boucher ({len(selection['boucher'])}), hors panier :")
+        for line in selection["boucher"]:
+            print(
+                f"  {line['quantite']} x {line['terme']} "
+                f"(réf. Mon Marché : {line['reference']}, {line['prix_indicatif']})"
+            )
     if selection["introuvables"]:
         print(f"\nIntrouvables : {', '.join(selection['introuvables'])}")
 
@@ -458,6 +540,15 @@ def main() -> None:
     parser.add_argument("--out", help="write the ambiguous terms to this HTML file")
     parser.add_argument("--json", help="write the selection to this JSON file")
     parser.add_argument("--creneau", help="delivery slot id, if the cart must be created")
+    parser.add_argument(
+        "--boucher",
+        help="write the meat lines, left out of the cart, to this markdown file",
+    )
+    parser.add_argument(
+        "--rayons-boucher",
+        default=",".join(BUTCHER_PREFIXES),
+        help="sku prefixes bought at the butcher (default: BC, add CH for charcuterie)",
+    )
     parser.add_argument("--execute", action="store_true", help="really fill the cart")
     args = parser.parse_args()
 
@@ -470,10 +561,16 @@ def main() -> None:
         wanted = read_list(args.liste, args.termes)
         if not wanted:
             parser.error("give at least one term, or a list with --liste")
-        selection = build_selection(session, wanted, load_preferences(session))
+        prefixes = tuple(
+            prefix.strip().upper() for prefix in args.rayons_boucher.split(",") if prefix.strip()
+        )
+        selection = build_selection(session, wanted, load_preferences(session), prefixes)
 
     print_selection(selection)
 
+    if args.boucher and selection.get("boucher"):
+        render_butcher_list(selection, args.boucher)
+        print(f"\nListe boucher écrite dans {args.boucher}")
     if args.out and selection["a_choisir"]:
         render_choices(selection, args.out)
         print(f"\nPage de choix écrite dans {args.out}")

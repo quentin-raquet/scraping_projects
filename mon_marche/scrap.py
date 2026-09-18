@@ -13,6 +13,7 @@ import argparse
 import datetime
 import json
 import os
+import time
 from typing import Any, Optional
 
 import requests
@@ -28,6 +29,9 @@ EMAIL_ENV = "EMAIL_MON_MARCHE"
 PASSWORD_ENV = "PASSWORD_MON_MARCHE"
 # Allowed values of the `type` parameter of the search endpoint.
 SEARCH_TYPES = ["PRODUCT", "RECIPE"]
+# The API answers an occasional 503 from its upstream, retry those.
+RETRY_STATUS = (502, 503, 504)
+RETRY_COUNT = 3
 # Price units used by the API, translated for display.
 UNITS = {"count": "pièce", "kg": "kg", "l": "L"}
 
@@ -108,14 +112,18 @@ def request_json(
     Returns:
         Any: The decoded JSON body.
     """
-    res = session.request(
-        method,
-        f"{BASE_URL}{path}",
-        params=params,
-        json=body,
-        headers={"Referer": f"{BASE_URL}/"},
-        timeout=30,
-    )
+    for attempt in range(RETRY_COUNT):
+        res = session.request(
+            method,
+            f"{BASE_URL}{path}",
+            params=params,
+            json=body,
+            headers={"Referer": f"{BASE_URL}/"},
+            timeout=30,
+        )
+        if res.status_code not in RETRY_STATUS or attempt == RETRY_COUNT - 1:
+            break
+        time.sleep(2**attempt)
     if res.status_code != 200 and res.status_code not in allow_status:
         try:
             message = res.json().get("message", res.text[:200])

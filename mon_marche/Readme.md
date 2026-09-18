@@ -262,6 +262,18 @@ défaut (jambon, lardons). Une ligne de liste peut aussi forcer le routage avec
 (`minOrderAmount` de la zone), et le panier affiche
 `minOrderAmountReached: false` tant qu'elle n'est pas atteinte.
 
+Les frais de livraison sont dégressifs par paliers, dans
+`delivery.deliveryPrices` du panier, exprimés en centimes sur le total produits :
+
+| Total produits | Frais |
+| --- | --- |
+| à partir de 0 € | 5,99 € |
+| à partir de 60 € | 3,99 € |
+| à partir de 80 € | offerts |
+
+Le palier appliqué se lit dans `price.quotation.shipping`, recalculé à chaque
+modification du panier.
+
 ## Listes de favoris
 
 `favoris.py` pilote les listes de favoris du compte, qui servent de support de

@@ -99,7 +99,10 @@ Points d'attention :
   créneau** ;
 - dans le panier, la quantité d'une ligne est dans `quotation.count` et son
   total dans `quotation2.totals.net` ; les totaux du panier sont dans
-  `price.quotation` (`net`, `shipping`, `preparationFee`, `preauthorization`).
+  `price.quotation` (`net`, `shipping`, `preparationFee`, `preauthorization`) ;
+- une ligne vendue au poids porte un `count` de 1 quel que soit son poids, qui
+  est dans `quotation.weight` : l'afficher par le `count` donnerait
+  « 1 pièces » pour 500 g d'oignons.
 
 ## Points d'attention
 

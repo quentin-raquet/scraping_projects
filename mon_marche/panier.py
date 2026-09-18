@@ -268,6 +268,30 @@ def line_quantity(product: dict) -> int:
     return product.get("quotation", {}).get("count", 0)
 
 
+def line_label(product: dict) -> str:
+    """Say how much of a product a cart line holds.
+
+    A line sold per weight carries a count of 1 whatever its weight, so showing
+    the count would read "1 pièces" for half a kilo of onions. Its real size is
+    in `quotation.weight`.
+
+    Args:
+        product (dict): A product of `cart["products"]`.
+
+    Returns:
+        str: The quantity with its unit, e.g. "0,5 kg" or "2 pièces".
+    """
+    quotation = product.get("quotation", {})
+    definition = product.get("quotation2", {}).get("count", {}).get("itemDefinition", {})
+    if definition.get("type") == "arbitraryQuantity" and quotation.get("weight"):
+        unit = (definition.get("weight") or {}).get("unit", "kg")
+        return f"{quotation['weight']:g} {unit}".replace(".", ",")
+    count = quotation.get("count", 0)
+    granularity = product.get("granularity", {})
+    unit = granularity.get("singular" if count <= 1 else "plural", "")
+    return f"{count} {unit}".strip()
+
+
 def line_total(product: dict) -> Optional[int]:
     """Read the total price of a cart line, in cents.
 
@@ -292,9 +316,8 @@ def print_cart(cart: Optional[dict]) -> None:
     products = cart.get("products") or []
     print(f"Panier {cart.get('id', '')} : {len(products)} lignes")
     for product in products:
-        unit = product.get("granularity", {}).get("plural", "")
         print(
-            f"  {line_quantity(product)} {unit} | {product.get('name')} "
+            f"  {line_label(product)} | {product.get('name')} "
             f"({product.get('sku')}) | {format_price(line_total(product))}"
         )
 

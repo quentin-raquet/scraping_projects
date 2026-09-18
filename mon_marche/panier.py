@@ -222,8 +222,12 @@ def resolve_sku(session: requests.Session, sku: str, hint: str = "") -> dict:
         for product in category.get("products", []):
             if product.get("sku") == sku:
                 return product
-    if hint:
-        for product in search(session, hint, "PRODUCT", limit=20).get("items", []):
+    # The search is fussy about long phrases: "banane" finds the product that
+    # "main de banane bio" misses, so narrow the hint down word by word.
+    words = hint.split()
+    attempts = [hint] + [" ".join(words[:count]) for count in range(len(words) - 1, 0, -1)]
+    for attempt in dict.fromkeys(attempt for attempt in attempts if attempt):
+        for product in search(session, attempt, "PRODUCT", limit=20).get("items", []):
             if product.get("sku") == sku:
                 return product
     raise Exception(

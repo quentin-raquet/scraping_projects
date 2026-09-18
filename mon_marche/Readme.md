@@ -293,6 +293,22 @@ Les frais de livraison sont dégressifs par paliers, dans
 Le palier appliqué se lit dans `price.quotation.shipping`, recalculé à chaque
 modification du panier.
 
+## Ce que le catalogue ne vend pas
+
+Constaté en cherchant, pour éviter d'y revenir :
+
+- **aucun rayon surgelé** — zéro produit sur « surgelé » ;
+- pas de **noix de coco râpée** (eau, crème, noix entière oui) ;
+- une seule **eau gazeuse**, le pack Perrier 6 × 33 cl ;
+- pas de **pack de lait** de consommation courante : le plus petit format est la
+  bouteille de 50 cl à l'unité ;
+- pas de **pain de mie sans sucre ajouté**, les cinq références en contiennent ;
+- pas de paquet de **9 rouleaux** de papier toilette : 6 ou 12.
+
+Les fruits et légumes se vendent souvent par lot indivisible — les bananes par
+« main » d'environ 1 kg, les oignons par 500 g — donc **commander « 2 oignons »
+ou « 6 bananes » à la pièce n'est pas possible**.
+
 ## Listes de favoris
 
 `favoris.py` pilote les listes de favoris du compte, qui servent de support de

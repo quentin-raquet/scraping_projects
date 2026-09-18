@@ -183,10 +183,18 @@ Le classement d'un candidat :
 | origine France (`origin` contenant « France ») | +20 |
 | AOP, IGP, Label Rouge, HVE | +10 chacun |
 | mot du terme retrouvé dans le nom | +12 par mot, +20 si tous |
+| tous les mots dans les 5 premiers mots du nom | +15 |
+| mot du terme absent, alors qu'un autre candidat l'a | -35 par mot |
 | rang dans les résultats du catalogue | -2 par place |
 
 Le bonus de nom passe devant le bonus bio à dessein : sans lui, « saucisse de
 Toulouse » atterrissait sur une saucisse de Francfort BIO.
+
+Les deux règles de mots existent parce que le bonus d'historique (+60) écrasait
+tout : « tomates séchées » renvoyait **la sauce tomate au basilic** déjà achetée,
+qui ne coche qu'un mot sur deux. Et le nom d'un produit dit ce qu'il **est** dans
+ses premiers mots : « Les Tomates séchées Citres » en est, « Le Tartare de saumon
+avec courgettes et tomates séchées » n'en est pas.
 
 Le bonus de marque couvre le « produit similaire dans l'historique » sans SKU
 identique : **le catalogue met la marque entre guillemets doubles** dans le nom

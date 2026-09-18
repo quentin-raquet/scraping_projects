@@ -160,6 +160,25 @@ def term_words(term: str) -> list[str]:
     return [word for word in words if word not in STOP_WORDS and len(word) > 2]
 
 
+def matches_head(product: dict, words: list[str], head: int = 5) -> bool:
+    """Tell whether the term names what the product is, not what it contains.
+
+    The head of a product name says what it is: "Les Tomates séchées Citres" is
+    dried tomatoes, "Le Tartare de saumon avec courgettes et tomates séchées"
+    is a salmon tartare.
+
+    Args:
+        product (dict): A catalog product.
+        words (list): Words returned by `term_words`.
+        head (int): Number of leading words of the name that count as the head.
+
+    Returns:
+        bool: True when every word of the term sits in the head of the name.
+    """
+    leading = " ".join(normalize(product.get("name", "")).split()[:head])
+    return bool(words) and all(word[:-1] in leading or word in leading for word in words)
+
+
 def matched_words(product: dict, words: list[str]) -> list[str]:
     """List the words of a term found in the name of a product.
 
@@ -247,6 +266,8 @@ def score_product(
         if len(found) == len(words):
             score += 20
             reasons.append("nom exact")
+            if matches_head(product, words):
+                score += 15
 
     if sku in preferences["bought"]:
         score += 60
@@ -302,7 +323,27 @@ def rank_candidates(
             if filter_on_name and words and not matched_words(product, words):
                 continue
             score, reasons = score_product(product, preferences, position, words)
-            candidates.append({**product, "score": score, "reasons": reasons})
+            candidates.append(
+                {
+                    **product,
+                    "score": score,
+                    "reasons": reasons,
+                    "mots": len(matched_words(product, words)) if words else 0,
+                }
+            )
+
+        # When some product names every word of the term, one naming half of it
+        # is probably something else: a sauce tomate is not a tomate séchée, and
+        # a purchase history bonus must not make up for the missing word.
+        if candidates and words:
+            best_match = max(candidate["mots"] for candidate in candidates)
+            for candidate in candidates:
+                missing = best_match - candidate["mots"]
+                if missing:
+                    candidate["score"] -= 35 * missing
+                    candidate["reasons"] = candidate["reasons"] + [
+                        f"{missing} mot(s) du terme absent(s)"
+                    ]
         return sorted(candidates, key=lambda candidate: -candidate["score"])
 
     # The name filter also drops the synonyms the catalog resolves on its own:

@@ -1,0 +1,356 @@
+# Mon Marché — accès au compte client
+
+Client en lecture seule du compte client de [mon-marche.fr](https://www.mon-marche.fr/),
+le site de courses en ligne (Keplr) livré à Paris.
+
+## Comment le site s'authentifie
+
+Le site est une app Next.js qui parle à sa propre API JSON, sur le même domaine
+(`https://www.mon-marche.fr/api/...`). L'authentification est un simple cookie
+de session :
+
+```
+POST /api/auth/signin
+{"email": "...", "password": "..."}
+→ 200 + Set-Cookie: session=...; HttpOnly; Secure; SameSite=Lax; Max-Age=5184000
+```
+
+- pas de CSRF token, pas de captcha, pas de 2FA sur ce parcours ;
+- la réponse contient déjà le profil (nom, email, téléphone, adresse de
+  facturation) ; le champ `accessToken` qu'elle renvoie vaut
+  `dummy_and_unused_token_...`, tout passe bien par le cookie ;
+- le cookie est valable 60 jours et suffit ensuite pour tous les endpoints du
+  compte ;
+- l'API refuse le User-Agent par défaut de `requests`, le script en envoie un de
+  navigateur.
+
+Les identifiants sont lus dans les variables d'environnement
+`EMAIL_MON_MARCHE` et `PASSWORD_MON_MARCHE` — rien n'est stocké dans le dépôt.
+
+## Endpoints utilisés
+
+| Endpoint | Contenu |
+| --- | --- |
+| `POST /api/auth/signin` | connexion, profil, cookie de session |
+| `GET /api/account/addresses` | adresses de livraison (contact, digicodes, GPS) |
+| `GET /api/orders/past` | commandes livrées (produits, créneau, total) |
+| `GET /api/orders/current` | commandes en cours |
+| `GET /api/account/top-products` | produits les plus commandés |
+| `GET /api/account/bookmarks` | listes de favoris |
+| `GET /api/account/coupons` | coupons disponibles |
+| `GET /api/loyalty/user` | solde de points de fidélité |
+| `GET /api/search2?text=…&type=PRODUCT` | recherche catalogue |
+
+Côté panier (`panier.py`) :
+
+| Endpoint | Rôle |
+| --- | --- |
+| `POST /api/addresses/deliverySlots2` | créneaux de livraison pour une adresse |
+| `PATCH /api/cart/delivery2` | choisit l'adresse et le créneau — **crée le panier** |
+| `GET /api/cart` | contenu du panier |
+| `PATCH /api/cart/product` | fixe la quantité d'un produit |
+| `PATCH /api/cart/products` | fixe les quantités de plusieurs produits d'un coup |
+| `DELETE /api/cart` | vide le panier |
+
+Endpoints de paiement volontairement laissés de côté :
+`PUT /api/cart/createPaymentIntent`, `PATCH /api/cart/initialOrder`,
+`PATCH /api/cart/finalizePrepay`.
+
+## Le panier
+
+Le panier est créé **paresseusement** : tant qu'aucun créneau de livraison n'a
+été choisi, tous les endpoints panier répondent 404 `E_08_0005`
+« Le panier est introuvable ». La séquence est donc :
+
+1. `POST /api/addresses/deliverySlots2` avec `{postalCode, countryCode, location}`
+   de l'adresse → les zones et leurs créneaux ;
+2. `PATCH /api/cart/delivery2` avec
+   `{"delivery": {"note": …, "address": {"formattedAddress", "location", "addressComponents"}}, "timeSlot": <le créneau entier>}`
+   → **crée le panier** et renvoie son contenu ;
+3. `PATCH /api/cart/product` avec `{"product": {"id": <canonicalId>, "quantity": n}}`.
+
+Points d'attention :
+
+- **l'id attendu est le `canonicalId`**, c'est-à-dire la partie avant le `$` d'un
+  id de catalogue (`QH9QWo2sF$rDyRbLxRPFibN8zcdLJN6` → `QH9QWo2sF`). Le front
+  fait exactement ce `split("$")[0]` avant d'appeler l'API ;
+- **la quantité est fixée, pas incrémentée** : envoyer `quantity: 3` sur une
+  ligne à 1 donne 3, pas 4. `quantity: 0` retire la ligne ;
+- la quantité est un nombre d'articles dans l'unité `granularity` du produit
+  (pièces, bocaux…). Pour un produit vendu au poids, le prix suit le poids :
+  2 citrons de 160 g à 3,99 € / kg = 1,28 € ;
+- **le conditionnement n'est pas dans `packSize`** mais dans
+  `itemDefinition.terminologyOverride` : « 12 rouleaux », « Pack de 3 ». C'est
+  souvent le champ décisif (papier toilette, essuie-tout, œufs) ;
+- **`itemDefinition.type` décide de ce qu'achète une quantité**, et c'est le
+  piège principal :
+
+  | `type` | Quantité 2 achète |
+  | --- | --- |
+  | `piece` | 2 articles (2 bottes d'oignons blancs) |
+  | `pieceWeight` | 2 articles du poids indiqué (2 filets de 500 g) |
+  | `arbitraryQuantity` | 2 × le poids de référence, soit **1 kg** pour un oignon vendu par 500 g |
+
+  Un `arbitraryQuantity` n'a donc pas de « pièce » : impossible de commander
+  2 oignons rouges, le pas est de 500 g ;
+- la recherche catalogue **n'indexe pas le SKU** : chercher `FL2846` ne renvoie
+  rien, il faut chercher par nom puis lire le `canonicalId` ;
+- `DELETE /api/cart` vide les produits mais **conserve le panier et son
+  créneau** ;
+- dans le panier, la quantité d'une ligne est dans `quotation.count` et son
+  total dans `quotation2.totals.net` ; les totaux du panier sont dans
+  `price.quotation` (`net`, `shipping`, `preparationFee`, `preauthorization`) ;
+- une ligne vendue au poids porte un `count` de 1 quel que soit son poids, qui
+  est dans `quotation.weight` : l'afficher par le `count` donnerait
+  « 1 pièces » pour 500 g d'oignons.
+
+## Points d'attention
+
+- **`type` de `/api/search2` est en majuscules** : `PRODUCT` ou `RECIPE`. Les
+  valeurs `products` / `recipes` utilisées côté front comme noms d'onglets sont
+  refusées par l'API (400).
+- **Tous les montants sont en centimes** : `totalPrice: 24563` = 245,63 €,
+  `pricing.sellPrices.perWeightUnit.net: 399` = 3,99 € / kg. Les champs `net`
+  sont TTC, les champs `dutyFree` HT.
+- L'unité `count` d'un prix veut dire « à la pièce », `kg` un prix au kilo. Le
+  prix à afficher est celui dont `main` vaut `true`.
+- Les dates (`createdAt`, créneaux de livraison `from` / `to` / `orderUntil`)
+  sont des timestamps en millisecondes.
+- `GET /api/cart` renvoie un 404 `E_08_0005` « Le panier est introuvable »
+  quand le panier est vide : c'est nominal, pas une erreur d'auth.
+- Les produits d'une commande passée ne portent que `id`, `name` et `image` :
+  ni quantité ni prix ligne. Le détail d'une commande est à rechercher
+  ailleurs si besoin.
+
+## Usage
+
+Le script n'a besoin que de `requests` :
+
+```
+pip install -r ../requirements.txt
+```
+
+```
+python scrap.py compte                          # profil, adresse, fidélité, coupons
+python scrap.py commandes                       # commandes en cours et passées
+python scrap.py favoris --limit 10              # produits les plus commandés
+python scrap.py recherche "tomate" --limit 5    # recherche catalogue
+python scrap.py recherche "curry" --type RECIPE # recherche recettes
+```
+
+`--json fichier.json` ajoute le dump brut de la réponse à n'importe quelle
+sous-commande.
+
+### Panier
+
+```
+python panier.py voir                                  # contenu du panier
+python panier.py creneaux                              # créneaux de livraison
+python panier.py ajouter citron jaune --quantite 3     # dry run
+python panier.py ajouter citron jaune --quantite 3 --execute
+python panier.py ajouter "pesto genovese" --id 3F3d7dC1T --execute
+python panier.py retirer "pesto genovese" --execute
+python panier.py vider --execute
+```
+
+- **le dry run est le mode par défaut**, rien n'est écrit sans `--execute` ;
+- si aucun panier n'existe, `ajouter --execute` en crée un sur la première
+  adresse du compte et le premier créneau libre ; `--creneau <id>` (pris dans
+  `panier.py creneaux`) permet d'en choisir un autre ;
+- `--id` court-circuite la recherche catalogue quand on connaît le
+  `canonicalId`, utile si la recherche par nom est ambiguë ;
+- `panier.py creneau <id> --execute` change le créneau d'un panier existant.
+
+### Liste de courses
+
+`courses.py` transforme une liste de termes en panier, en tranchant entre les
+produits du catalogue à partir des préférences du compte :
+
+```
+python courses.py "tomate cerise" "mozzarella:2" "pesto genovese"
+python courses.py --liste liste.json --out choix.html --json selection.json
+python courses.py --selection selection.json --creneau mov89ouSRu --execute
+```
+
+Le classement d'un candidat :
+
+| Signal | Points |
+| --- | --- |
+| déjà commandé (sku dans `/api/account/products`) | +60 |
+| dans les tops du compte (`/api/account/top-products`) | +30 au premier, dégressif |
+| marque déjà achetée, sur un produit jamais pris | +18 |
+| label BIO (`labels` contenant « BIO ») | +25 |
+| origine France (`origin` contenant « France ») | +20 |
+| AOP, IGP, Label Rouge, HVE | +10 chacun |
+| mot du terme retrouvé dans le nom | +12 par mot, +20 si tous |
+| tous les mots dans les 5 premiers mots du nom | +15 |
+| mot du terme absent, alors qu'un autre candidat l'a | -35 par mot |
+| rang dans les résultats du catalogue | -2 par place |
+
+Le bonus de nom passe devant le bonus bio à dessein : sans lui, « saucisse de
+Toulouse » atterrissait sur une saucisse de Francfort BIO.
+
+Les deux règles de mots existent parce que le bonus d'historique (+60) écrasait
+tout : « tomates séchées » renvoyait **la sauce tomate au basilic** déjà achetée,
+qui ne coche qu'un mot sur deux. Et le nom d'un produit dit ce qu'il **est** dans
+ses premiers mots : « Les Tomates séchées Citres » en est, « Le Tartare de saumon
+avec courgettes et tomates séchées » n'en est pas.
+
+Le bonus de marque couvre le « produit similaire dans l'historique » sans SKU
+identique : **le catalogue met la marque entre guillemets doubles** dans le nom
+(`L'Essuie-tout "Renova"`), ce qui la rend extractible. Un gel douche
+« Le Petit Marseillais » déjà acheté suffit ainsi à désigner la recharge de
+savon mains de la même marque.
+
+Un terme est laissé **au choix de l'utilisateur** quand les deux meilleurs
+candidats se tiennent à moins de 15 points, ou quand le meilleur ne coche aucun
+critère. `--out` écrit alors une page HTML avec les photos, la contenance, le prix au
+litre ou au kilo (`weightPrice.unitPrice`, seule façon de comparer un flacon de
+25 cl à un bidon de 3 L), le SKU et les raisons ; `--favoris "<nom>"` fait mieux
+et pousse les candidats dans une liste de favoris du site, ce qui donne un lien
+mon-marche.fr avec les vraies fiches produit et les boutons d'ajout au panier.
+`--selection` relit ensuite la sélection corrigée.
+
+La recherche catalogue est floue (elle renvoie un cottage cheese pour
+« tomate cerise »), d'où le filtre qui exige qu'au moins un mot du terme se
+retrouve dans le nom ou la catégorie du produit.
+
+### Recettes
+
+Le site publie ses recettes avec, pour chaque ingrédient, **l'article du
+catalogue correspondant** : une idée de repas se résout donc en lignes de panier
+sans rien deviner.
+
+```
+GET /api/search2?text=mousse+au+chocolat&type=RECIPE   → id de la recette
+GET /api/recipe/<id>                                   → ingredients[].article.slug
+GET /api/articleDetailBySlug/<slug>                    → le produit et son prix
+```
+
+```
+python courses.py --recette "mousse au chocolat"
+```
+
+La recette donne aussi `servings`, `preparationTime`, `cookingTime` et `steps`
+(du HTML), de quoi calculer les quantités pour un nombre de parts.
+
+### Contrôle de composition
+
+`GET /api/articleDetailBySlug/<slug>` renvoie une fiche plus riche que la
+recherche, avec l'attribut `liste-ingredient` (échappé en HTML) et
+`denomination-legale`. `courses.py --sans-sucre` s'en sert pour écarter les
+candidats sucrés.
+
+Le résultat a **trois états**, pas deux :
+
+| État | Sens |
+| --- | --- |
+| `sans` | liste déclarée, aucun édulcorant trouvé |
+| `avec` | liste déclarée, édulcorant trouvé (sucre, dextrose, sirop…) |
+| `inconnu` | **aucune liste déclarée** |
+
+Beaucoup de produits ne déclarent rien : lire ce silence comme « sans sucre »
+laisserait passer un produit sucré sur une contrainte alimentaire. Les candidats
+`inconnu` sont donc listés après les `sans`, étiquetés « composition non
+déclarée », jamais confondus avec eux.
+
+`denomination-legale` vaut aussi le détour : « Le Fromage grec » du catalogue
+s'y déclare « fromage au lait pasteurisé de vache », ce n'est donc pas une feta.
+
+### Rayons et liste boucher
+
+**Les deux premières lettres du SKU nomment le rayon** — vérifié en recoupant
+les SKU avec les catégories de `/api/account/products` :
+
+| Préfixe | Rayon |
+| --- | --- |
+| `BC` | Boucherie |
+| `CH` | Charcuterie |
+| `MA` | Marée (poissonnerie) |
+| `FR` | Fromagerie |
+| `FL` | Fruits & Légumes |
+| `LS` | Crèmerie / libre-service frais |
+| `EP` | Épicerie |
+| `TB` | Traiteur |
+| `NA` | Non alimentaire |
+
+La viande n'est pas commandée ici : un terme dont le meilleur candidat est en
+`BC` — ou dont la moitié des meilleurs candidats le sont — sort du panier et va
+dans la liste boucher, écrite en markdown par `--boucher liste.md` avec
+l'équivalent Mon Marché et son prix comme repère. En cas d'égalité entre rayons,
+c'est le boucher qui gagne : ne pas commander de viande ici est une consigne
+explicite, une ligne mal routée se repère d'un coup d'œil.
+
+`--rayons-boucher BC,CH` y ajoute la charcuterie, qui reste sur Mon Marché par
+défaut (jambon, lardons). Une ligne de liste peut aussi forcer le routage avec
+`{"terme": "...", "boucher": true}`.
+
+À noter : la **commande minimum de la zone de livraison est de 40 €**
+(`minOrderAmount` de la zone), et le panier affiche
+`minOrderAmountReached: false` tant qu'elle n'est pas atteinte.
+
+Les frais de livraison sont dégressifs par paliers, dans
+`delivery.deliveryPrices` du panier, exprimés en centimes sur le total produits :
+
+| Total produits | Frais |
+| --- | --- |
+| à partir de 0 € | 5,99 € |
+| à partir de 60 € | 3,99 € |
+| à partir de 80 € | offerts |
+
+Le palier appliqué se lit dans `price.quotation.shipping`, recalculé à chaque
+modification du panier.
+
+## Ce que le catalogue ne vend pas
+
+Constaté en cherchant, pour éviter d'y revenir :
+
+- **aucun rayon surgelé** — zéro produit sur « surgelé » ;
+- pas de **noix de coco râpée** (eau, crème, noix entière oui) ;
+- une seule **eau gazeuse**, le pack Perrier 6 × 33 cl ;
+- pas de **pack de lait** de consommation courante : le plus petit format est la
+  bouteille de 50 cl à l'unité ;
+- pas de **pain de mie sans sucre ajouté**, les cinq références en contiennent ;
+- pas de paquet de **9 rouleaux** de papier toilette : 6 ou 12.
+
+Les fruits et légumes se vendent souvent par lot indivisible — les bananes par
+« main » d'environ 1 kg, les oignons par 500 g — donc **commander « 2 oignons »
+ou « 6 bananes » à la pièce n'est pas possible**.
+
+## Listes de favoris
+
+`favoris.py` pilote les listes de favoris du compte, qui servent de support de
+partage : une liste s'affiche sur le site à
+`/client/favoris/liste/<id>`, avec photos, prix et boutons d'ajout au panier.
+
+| Endpoint | Rôle |
+| --- | --- |
+| `GET /api/account/bookmarks-lists` | les listes du compte |
+| `POST /api/account/bookmarks-lists` | crée une liste, corps `{"name": …}` |
+| `GET /api/account/bookmarks-lists/<id>` | une liste et ses produits |
+| `PATCH /api/account/bookmarks-lists/<id>` | renomme |
+| `DELETE /api/account/bookmarks-lists/<id>` | supprime |
+| `POST /api/account/bookmarks-lists/<id>/bookmarks` | ajoute des produits |
+| `DELETE /api/account/bookmarks-lists/<id>/bookmarks/<bookmarkId>` | retire un produit |
+
+L'ajout attend `{"bookmarks": [{"type": "PRODUCT", "articleId": <canonicalId>}]}` —
+le même `canonicalId` que le panier, pas le SKU.
+
+```
+python favoris.py lister
+python favoris.py voir <listId>
+python favoris.py creer "Apéro" --termes "olives" "houmous" --execute
+python favoris.py supprimer <listId> --execute
+```
+
+La page d'une liste est **privée** : elle exige d'être connecté au compte
+propriétaire, sinon le site redirige en 308 vers `/?login=true&redirect=…`.
+Ce n'est donc pas un lien de partage public.
+
+## Périmètre
+
+`scrap.py` est strictement en lecture. `panier.py` écrit dans le panier —
+quantités, créneau de livraison — mais **ne paie rien et ne passe aucune
+commande** : les endpoints de paiement ne sont pas appelés. Ajouter un parcours
+de commande (comme `delit/commander.py`) impliquerait un vrai paiement : à
+traiter séparément, avec une validation explicite avant l'envoi.
